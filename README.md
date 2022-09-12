@@ -24,7 +24,7 @@ This crate optionally implements the following features:
 
 ```toml
 [dependencies]
-craftio-rs = "0.1"
+craftio-rs = { git = "https://github.com/muno9748/craftio-rs.git" }
 ```
 
 This library can be used to connect to servers or host client connections. It implements all features of the Minecraft
