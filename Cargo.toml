@@ -12,7 +12,8 @@ readme = "README.md"
 
 [dependencies]
 mcproto-rs = { git = "https://github.com/muno9748/mcproto-rs.git", features = ["std"], default-features = false }
-aes = { version = "0.6", optional = true }
+aes = { version = "0.8.1", optional = true }
+cfb8 = { version = "0.8.1", optional = true }
 flate2 = { version = "1.0", features = ["zlib"], optional = true }
 
 thiserror = "1.0"
@@ -26,7 +27,7 @@ default = [ "compression", "encryption", "tokio-io" ]
 
 futures-io = ["futures", "async-trait"]
 tokio-io = ["tokio", "async-trait"]
-encryption = ["aes"]
+encryption = ["aes", "cfb8"]
 compression = [ "flate2" ]
 backtrace = []
 gat = ["mcproto-rs/gat"]

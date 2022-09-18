@@ -11,7 +11,7 @@ pub mod wrapper;
 pub mod writer;
 
 #[cfg(feature = "encryption")]
-pub use cfb8::CipherError;
+pub use crate::cfb8::CipherError;
 pub use connection::CraftConnection;
 pub use reader::*;
 pub use tcp::*;

@@ -2,16 +2,17 @@ pub(crate) const VAR_INT_BUF_SIZE: usize = 5;
 
 pub(crate) fn get_sized_buf(buf: &mut Option<Vec<u8>>, offset: usize, size: usize) -> &mut [u8] {
     let end_at = offset + size;
-    loop {
-        match buf {
-            Some(v) => {
-                ensure_buf_has_size(v, end_at);
-                break &mut v[offset..end_at];
-            }
-            None => {
-                let new_buf = Vec::with_capacity(end_at);
-                *buf = Some(new_buf);
-            }
+
+    match buf {
+        Some(v) => {
+            ensure_buf_has_size(v, end_at);
+            &mut v[offset..end_at]
+        }
+        None => {
+            let new_buf = vec![0u8; end_at];
+            *buf = Some(new_buf);
+            
+            unsafe { &mut buf.as_mut().unwrap_unchecked()[offset..end_at] }
         }
     }
 }

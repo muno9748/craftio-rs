@@ -1,6 +1,6 @@
 #[cfg(feature = "encryption")]
 use crate::cfb8::{setup_craft_cipher, CipherError, CraftCipher};
-use crate::util::{get_sized_buf, VAR_INT_BUF_SIZE};
+use crate::util::get_sized_buf;
 use crate::wrapper::{CraftIo, CraftWrapper};
 #[cfg(feature = "compression")]
 use flate2::{DecompressError, FlushDecompress, Status};
@@ -175,7 +175,7 @@ impl<R> CraftIo for CraftReader<R> {
 
     #[cfg(feature = "encryption")]
     fn enable_encryption(&mut self, key: &[u8], iv: &[u8]) -> Result<(), CipherError> {
-        setup_craft_cipher(&mut self.encryption, key, iv)
+        setup_craft_cipher(&mut self.encryption, key, iv, false)
     }
 
     fn set_max_packet_size(&mut self, max_size: usize) {
@@ -303,6 +303,7 @@ where
 
     fn read_raw_inner(&mut self) -> ReadResult<usize> {
         self.move_ready_data_to_front();
+        
         let primary_packet_len = rr_unwrap!(self.read_packet_len_sync()).0 as usize;
         if primary_packet_len > self.max_packet_size {
             return Err(ReadError::PacketTooLarge {
@@ -321,11 +322,47 @@ where
     }
 
     fn read_packet_len_sync(&mut self) -> ReadResult<VarInt> {
-        let buf = rr_unwrap!(self.ensure_n_ready_sync(VAR_INT_BUF_SIZE));
-        let (v, size) = rr_unwrap!(deserialize_varint(buf));
-        self.raw_ready -= size;
-        self.raw_offset += size;
-        Ok(Some(v))
+        let mut position: usize = 0;
+        let mut value: i32 = 0;
+
+        loop {
+            let byte = &mut [rr_unwrap!(self.read_byte_sync())[0]];
+
+            #[cfg(feature = "encryption")]
+            handle_decryption(self.encryption.as_mut(), byte);
+
+            let byte = byte[0];
+
+            value |= ((byte & 0x7F) as i32) << (position * 7);
+
+            position += 1;
+
+            self.raw_ready -= 1;
+            self.raw_offset += 1;
+
+            if byte & 0x80 == 0 {
+                break Ok(Some(value.into()));
+            }
+
+            if position > 4 {
+                panic!("VarInt too long");
+            }
+        }
+    }
+
+    fn read_byte_sync(&mut self) -> ReadResult<&mut [u8]> {
+        if self.raw_ready < 1 {
+            let target =
+                get_sized_buf(&mut self.raw_buf, self.raw_offset, 1);
+            debug_assert_eq!(target.len(), 1);
+            check_unexpected_eof!(self.inner.read_exact(target));
+            self.raw_ready = 1;
+        }
+
+        let ready = get_sized_buf(&mut self.raw_buf, self.raw_offset, 1);
+        debug_assert_eq!(ready.len(), 1);
+
+        Ok(Some(ready))
     }
 
     fn ensure_n_ready_sync(&mut self, n: usize) -> ReadResult<&[u8]> {
@@ -368,6 +405,7 @@ where
 
     async fn read_raw_inner_async(&mut self) -> ReadResult<usize> {
         self.move_ready_data_to_front();
+        
         let primary_packet_len = rr_unwrap!(self.read_packet_len_async().await).0 as usize;
         if primary_packet_len > self.max_packet_size {
             return Err(ReadError::PacketTooLarge {
@@ -387,14 +425,50 @@ where
     }
 
     async fn read_packet_len_async(&mut self) -> ReadResult<VarInt> {
-        let buf = rr_unwrap!(self.ensure_n_ready_async(VAR_INT_BUF_SIZE).await);
-        let (v, size) = rr_unwrap!(deserialize_varint(buf));
-        self.raw_ready -= size;
-        self.raw_offset += size;
-        Ok(Some(v))
+        let mut position: usize = 0;
+        let mut value: i32 = 0;
+
+        loop {
+            let byte = &mut [rr_unwrap!(self.read_byte().await)[0]];
+
+            #[cfg(feature = "encryption")]
+            handle_decryption(self.encryption.as_mut(), byte);
+
+            let byte = byte[0];
+
+            value |= ((byte & 0x7F) as i32) << (position * 7);
+
+            position += 1;
+
+            self.raw_ready -= 1;
+            self.raw_offset += 1;
+
+            if byte & 0x80 == 0 {
+                break Ok(Some(value.into()));
+            }
+
+            if position > 4 {
+                panic!("VarInt too long");
+            }
+        }
     }
 
-    async fn ensure_n_ready_async(&mut self, n: usize) -> ReadResult<&[u8]> {
+    async fn read_byte(&mut self) -> ReadResult<&mut [u8]> {
+        if self.raw_ready < 1 {
+            let target =
+                get_sized_buf(&mut self.raw_buf, self.raw_offset, 1);
+            debug_assert_eq!(target.len(), 1);
+            check_unexpected_eof!(self.inner.read_exact(target).await);
+            self.raw_ready = 1;
+        }
+
+        let ready = get_sized_buf(&mut self.raw_buf, self.raw_offset, 1);
+        debug_assert_eq!(ready.len(), 1);
+
+        Ok(Some(ready))
+    }
+
+    async fn ensure_n_ready_async(&mut self, n: usize) -> ReadResult<&mut [u8]> {
         if self.raw_ready < n {
             let to_read = n - self.raw_ready;
             let target =
@@ -406,6 +480,7 @@ where
 
         let ready = get_sized_buf(&mut self.raw_buf, self.raw_offset, n);
         debug_assert_eq!(ready.len(), n);
+
         Ok(Some(ready))
     }
 }
@@ -449,7 +524,7 @@ macro_rules! dsz_unwrap {
             Err(err) => {
                 return Err(err.into());
             }
-        };
+        }
     };
 }
 
@@ -487,7 +562,7 @@ impl<R> CraftReader<R> {
         self.raw_offset += size;
         let buf =
             &mut self.raw_buf.as_mut().expect("should exist right now")[offset..offset + size];
-        // decrypt the packet if encryption is enabled
+
         #[cfg(feature = "encryption")]
         handle_decryption(self.encryption.as_mut(), buf);
 
@@ -580,13 +655,6 @@ where
         },
         Ok(None) => Ok(None),
         Err(err) => Err(err),
-    }
-}
-
-fn deserialize_varint(buf: &[u8]) -> ReadResult<(VarInt, usize)> {
-    match VarInt::mc_deserialize(buf) {
-        Ok(v) => Ok(Some((v.value, buf.len() - v.data.len()))),
-        Err(err) => Err(err.into()),
     }
 }
 

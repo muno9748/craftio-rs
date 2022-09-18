@@ -209,7 +209,7 @@ impl<W> CraftIo for CraftWriter<W> {
 
     #[cfg(feature = "encryption")]
     fn enable_encryption(&mut self, key: &[u8], iv: &[u8]) -> Result<(), CipherError> {
-        setup_craft_cipher(&mut self.encryption, key, iv)
+        setup_craft_cipher(&mut self.encryption, key, iv, true)
     }
 
     fn set_max_packet_size(&mut self, max_size: usize) {
